@@ -56,6 +56,27 @@ def test_core_imports_without_optional_dependencies():
     assert GeneralRecurrentUnet is not None
 
 
+def test_classy_bitfield_detected_pixels_remain_valid():
+    from ptsemseg.loader.pytorch_hdf5_loader import derive_classy_valid_mask
+
+    sci = np.ones(5, dtype=np.float32)
+    var = np.ones(5, dtype=np.float32)
+    mask = np.asarray(
+        [
+            0,       # clear
+            32,      # DETECTED
+            64,      # DETECTED_NEGATIVE
+            2,       # SAT
+            32 | 2,  # DETECTED + SAT
+        ],
+        dtype=np.uint16,
+    )
+
+    valid = derive_classy_valid_mask(sci, var, mask)
+
+    assert valid.tolist() == [True, True, True, False, False]
+
+
 def test_structure_cli_override_updates_model_cfg():
     sys.path.insert(0, str(REPO_ROOT))
     train_hand = importlib.import_module("train_hand")
