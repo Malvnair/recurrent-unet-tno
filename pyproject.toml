@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recurrent-unet"
+version = "0.1.0"
+description = "CPU-first modernization of recurrent U-Net research code for segmentation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "Pillow>=10",
+    "PyYAML>=6",
+    "tqdm>=4.66",
+    "matplotlib>=3.8",
+    "tensorboard>=2.15,<2.18",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+densecrf = [
+    "pydensecrf",
+]
+
+[tool.setuptools.packages.find]
+include = ["ptsemseg*"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = "-ra"
