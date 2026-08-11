@@ -3,9 +3,6 @@ pytorch_hdf5_loader.py
 
 reads image sequences from multiple HDF5 shards and converts each sample into tensors. For every sample, it can generate a new synthetic TNO in memory using the stored observational metadata, then constructs three input channels per frame: science image, inverse-variance weight map, and valid-pixel mask.
 
-The HDF5 mask dataset stores the raw uint16 CLASSY FITS mask bitfield.
-The network valid channel is a derived binary mask, not a direct binary
-interpretation of the HDF5 mask values.
 """
 
 
@@ -154,12 +151,12 @@ class ShardDataset(data.Dataset):
                 "exptime": f["frame/exptime"][:],
                 "gain": f["frame/gain"][:],
                 "pixel_scale": f["frame/pixel_scale"][:],
-                "psf_stamp": f["frame/psf_stamp"][:],
+                "psf_file": f["frame/psf_file"][:],
                 "tmpl_cent_time": f["template/cent_time"][:],
                 "tmpl_zp": f["template/zp"][:],
                 "tmpl_exptime": f["template/exptime"][:],
                 "tmpl_pixel_scale": f["template/pixel_scale"][:],
-                "tmpl_psf_stamp": f["template/psf_stamp"][:],
+                "tmpl_psf_file": f["template/psf_file"][:],
             }
             self._meta[shard_idx] = meta
         return meta

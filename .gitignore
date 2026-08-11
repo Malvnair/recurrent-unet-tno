@@ -1,6 +1,7 @@
 
 __pycache__
 *.py[cod]
+*.h5
 .pytest_cache/
 .ipynb_checkpoints/
 *.egg-info/
