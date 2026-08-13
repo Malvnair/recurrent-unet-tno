@@ -6,9 +6,6 @@ Reused synthetic-TNO logic from maketensor8.py
 
 """
 
-import contextlib
-import io
-
 import numpy as np
 from pathlib import Path
 
@@ -206,10 +203,8 @@ def build_line_psf(psf_file, rate, rate_ra, rate_dec, exptime, pixel_scale):
     if not psf_file.exists():
         raise FileNotFoundError(f"PSF file not found: {psf_file}")
 
-    # Restore PSF fresh each call. TRIPPy prints on every restore; silence it
-    # here so DataLoader worker benchmarks remain readable.
-    with contextlib.redirect_stdout(io.StringIO()):
-        mpsf = trippy_psf.modelPSF(restore=str(psf_file))
+    # restore PSF fresh each call
+    mpsf = trippy_psf.modelPSF(restore=str(psf_file))
 
     r2d = 180.0 / np.pi
     # Convert ra/dec motion to pixel angle
@@ -220,14 +215,13 @@ def build_line_psf(psf_file, rate, rate_ra, rate_dec, exptime, pixel_scale):
     if trippy_angle < -90:
         trippy_angle += 180.0
 
-    with contextlib.redirect_stdout(io.StringIO()):
-        mpsf.line(
-            rate,                   # total rate in arcsec/hr
-            trippy_angle,           # TRIPPy pixel-space angle
-            exptime / 3600.0,       # exposure duration in hours
-            pixScale=pixel_scale,
-            useLookupTable=True,
-        )
+    mpsf.line(
+        rate,                   # total rate in arcsec/hr
+        trippy_angle,           # TRIPPy pixel-space angle
+        exptime / 3600.0,       # exposure duration in hours
+        pixScale=pixel_scale,
+        useLookupTable=True,
+    )
     return mpsf
 
 
@@ -243,9 +237,9 @@ def make_psf_image(mpsf, shape, x, y, counts):
 
     # plant at unit amplitude on the padded blank canvas
     p_im = mpsf.plant(
-        x + pad,
-        y + pad,
-        1.0,
+        np.array([x + pad]),
+        np.array([y + pad]),
+        np.array([1.0]),
         np.zeros(big_shape, dtype=float),
         useLinePSF=True,
         returnModel=True,
@@ -266,6 +260,51 @@ def make_psf_image(mpsf, shape, x, y, counts):
 
     # crop back to the training cutout
     return p_im[pad:pad + H, pad:pad + W]
+
+
+##############
+# Visible-position sampling
+# reject frame-0 positions whose propagated track leaves any science frame
+########
+
+MAX_POSITION_TRIES = 100
+MAX_ORBIT_TRIES = 20
+
+
+def sample_visible_reference_position(rng, motion, affines, cent_times,
+                                      cent_time0, pscales, H, W,
+                                      pad_x, pad_y):
+    """
+    Pick a crop position so the TNO track stays inside
+    the cutout in every science frame. 
+    """
+    T = len(cent_times)
+
+    for _ in range(MAX_POSITION_TRIES):
+        # candidate frame-0 position, away from the edges
+        u_ref = rng.uniform(pad_x, W - pad_x)
+        v_ref = rng.uniform(pad_y, H - pad_y)
+
+        ok = True
+        for i in range(T):
+            # same affine + motion propagation as the injection loop
+            a = affines[i]
+            x_i = a[0, 0] * u_ref + a[0, 1] * v_ref + a[0, 2]
+            y_i = a[1, 0] * u_ref + a[1, 1] * v_ref + a[1, 2]
+
+            dt_hr = (cent_times[i] - cent_time0) * 24.0
+            x_inj = x_i + motion["rate_ra"] * dt_hr / pscales[i]
+            y_inj = y_i - motion["rate_dec"] * dt_hr / pscales[i]
+
+            # must sit safely inside every frame
+            if not (pad_x <= x_inj < W - pad_x and pad_y <= y_inj < H - pad_y):
+                ok = False
+                break
+
+        if ok:
+            return float(u_ref), float(v_ref)
+
+    return None
 
 
 ##############
@@ -351,45 +390,26 @@ def inject_cutout_sequence(science, variance, mask, metadata, rng,
 
     for k in range(num_implants):
 
-        # fake orbital paramters
-        orbit = orbit_sampler.sample()
-        # paramters to apparent sky motion
-        motion = MotionModel.compute(orbit)
+        # resample orbit+position until the whole track fits in every frame
+        for _ in range(MAX_ORBIT_TRIES):
+            # fake orbital paramters
+            orbit = orbit_sampler.sample()
+            # paramters to apparent sky motion
+            motion = MotionModel.compute(orbit)
+
+            ref = sample_visible_reference_position(
+                rng, motion, affines, cent_times, cent_time0,
+                pscales, H, W, pad_x, pad_y)
+            if ref is not None:
+                break
+        else:
+            raise RuntimeError(
+                "Could not find an implant position visible in every frame")
+
+        u_ref, v_ref = ref
+
         # random magnitude
         mag = mag_sampler.sample()
-
-        # Random frame-0 position in crop coordinates. Reject placements whose
-        # positive science-frame track would leave the crop.
-        u_ref = v_ref = None
-        for _ in range(1000):
-            cand_u = rng.uniform(pad_x, W - pad_x)
-            cand_v = rng.uniform(pad_y, H - pad_y)
-            frame_positions = []
-            for i in range(T):
-                a = affines[i]
-                x_i = a[0, 0] * cand_u + a[0, 1] * cand_v + a[0, 2]
-                y_i = a[1, 0] * cand_u + a[1, 1] * cand_v + a[1, 2]
-                dt_hr = (cent_times[i] - cent_time0) * 24.0
-                frame_positions.append((
-                    x_i + motion["rate_ra"] * dt_hr / pscales[i],
-                    y_i - motion["rate_dec"] * dt_hr / pscales[i],
-                ))
-            frame_positions = np.asarray(frame_positions)
-            in_bounds = (
-                (frame_positions[:, 0] >= pad_x)
-                & (frame_positions[:, 0] < W - pad_x)
-                & (frame_positions[:, 1] >= pad_y)
-                & (frame_positions[:, 1] < H - pad_y)
-            )
-            if np.all(in_bounds):
-                u_ref, v_ref = cand_u, cand_v
-                break
-
-        if u_ref is None or v_ref is None:
-            raise RuntimeError(
-                "Could not sample an in-bounds synthetic TNO trajectory after "
-                "1000 attempts. Check cutout size, cadence, and motion prior."
-            )
 
         # template line PSFs only depend on this implant's motion,
         # build them once instead of once per frame

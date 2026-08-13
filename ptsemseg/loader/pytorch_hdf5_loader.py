@@ -1,7 +1,10 @@
 """
 pytorch_hdf5_loader.py 
 
-reads image sequences from multiple HDF5 shards and converts each sample into tensors. For every sample, it can generate a new synthetic TNO in memory using the stored observational metadata, then constructs three input channels per frame: science image, inverse-variance weight map, and valid-pixel mask.
+reads image sequences from multiple HDF5 shards and converts each sample into tensors. 
+For every sample, it can generate a new synthetic TNO in memory using the stored observational metadata, 
+then constructs three input channels per frame: science image, variance plane, and raw CLASSY
+mask bitfield.
 
 """
 
@@ -19,35 +22,6 @@ from torch.utils import data
 from ptsemseg.loader.tno_injection import inject_cutout_sequence
 
 
-CLASSY_BAD_BITS = (
-    (1 << 0)   # BAD
-    | (1 << 1) # SAT
-    | (1 << 2) # INTRP
-    | (1 << 3) # CR
-    | (1 << 4) # EDGE
-    | (1 << 7) # SUSPECT
-    | (1 << 8) # NO_DATA
-    | (1 << 9) # BRIGHT_OBJECT
-    | (1 << 10) # CLIPPED
-    | (1 << 14) # SENSOR_EDGE
-    | (1 << 15) # UNMASKEDNAN
-)
-
-
-def derive_classy_valid_mask(science, variance, mask):
-    """Return binary network-validity mask from raw uint16 CLASSY bits."""
-    mask_bits = np.asarray(mask, dtype=np.uint16)
-    sci = np.asarray(science)
-    var = np.asarray(variance)
-    bad = (mask_bits & CLASSY_BAD_BITS) != 0
-
-    return (
-        ~bad
-        & np.isfinite(sci)
-        & np.isfinite(var)
-        & (var > 0)
-    )
-
 
 def _require_h5py():
     try:
@@ -58,27 +32,6 @@ def _require_h5py():
             "`python -m pip install -e .`."
         ) from exc
     return h5py
-
-
-def _remap_psf_files(paths, psf_root):
-    """Map ARC dbimages PSF paths to the local ignored PSF cache when present."""
-    resolved = []
-    for path in np.asarray(paths):
-        value = path.decode("utf-8") if isinstance(path, bytes) else str(path)
-        candidate = Path(value)
-        if candidate.exists():
-            resolved.append(value)
-            continue
-
-        marker = "dbimages/"
-        if marker in value:
-            local_candidate = psf_root / marker / value.split(marker, 1)[1]
-            if local_candidate.exists():
-                resolved.append(str(local_candidate))
-                continue
-
-        resolved.append(value)
-    return np.asarray(resolved, dtype=object)
 
 
 """
@@ -98,7 +51,6 @@ class ShardDataset(data.Dataset):
         self.inject = inject
         self.num_implants = num_implants
         self.output_mode = output_mode
-        self.psf_root = Path(data_dir).resolve().parent / "psf"
 
         # store current training epoch 
         self._epoch = mp.Value("i", 0)
@@ -173,16 +125,12 @@ class ShardDataset(data.Dataset):
                 "exptime": f["frame/exptime"][:],
                 "gain": f["frame/gain"][:],
                 "pixel_scale": f["frame/pixel_scale"][:],
-                "psf_file": _remap_psf_files(
-                    f["frame/psf_file"][:], self.psf_root
-                ),
+                "psf_file": f["frame/psf_file"][:],
                 "tmpl_cent_time": f["template/cent_time"][:],
                 "tmpl_zp": f["template/zp"][:],
                 "tmpl_exptime": f["template/exptime"][:],
                 "tmpl_pixel_scale": f["template/pixel_scale"][:],
-                "tmpl_psf_file": _remap_psf_files(
-                    f["template/psf_file"][:], self.psf_root
-                ),
+                "tmpl_psf_file": f["template/psf_file"][:],
             }
             self._meta[shard_idx] = meta
         return meta
@@ -237,23 +185,37 @@ class ShardDataset(data.Dataset):
             # raw background only, no fake object
             labels = {"num_implants": np.int64(0)}
 
-        # HDF5 mask is the raw CLASSY uint16 bitfield. The model receives a
-        # derived binary validity channel; DETECTED bits remain usable pixels.
-        valid_bool = derive_classy_valid_mask(sci, var, msk)
-        valid = valid_bool.astype(np.float32)
-        weight = np.zeros_like(var, dtype=np.float32)
-        weight[valid_bool] = 1.0 / var[valid_bool]
+        # Keep the original CLASSY planes with minimal manipulation.
+        # Only sanitize non-finite values so they are safe for PyTorch.
+        sci = np.nan_to_num(
+            sci,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        ).astype(np.float32, copy=False)
 
-        med = np.median(weight[valid_bool]) if np.any(valid_bool) else 1.0
-        if med > 0:
-            weight /= med
+        var = np.nan_to_num(
+            var,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        ).astype(np.float32, copy=False)
 
-        # Combine into network input and return as tensor
-        x = np.stack([sci, weight, valid], axis=1)  # (T, 3, H, W)
+        # Preserve the raw CLASSY bitmask values.
+        msk = np.asarray(msk, dtype=np.float32)
+
+        # channel 0 = science
+        # channel 1 = variance
+        # channel 2 = raw CLASSY mask bitfield
+        x = np.stack([sci, var, msk], axis=1)  # (T, 3, H, W)
+
         return {
             "input": torch.from_numpy(x),
             "labels": labels,
         }
+
+
+
 
 
 ####################
