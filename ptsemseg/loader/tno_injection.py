@@ -8,6 +8,7 @@ Reused synthetic-TNO logic from maketensor8.py
 
 import contextlib
 import io
+import os
 from pathlib import Path
 
 import numpy as np
@@ -194,7 +195,23 @@ def _as_path(p):
     # HDF5 hands strings back as bytes, make sure we get a plain str path
     if isinstance(p, bytes):
         p = p.decode("utf-8")
-    return str(p)
+    path = Path(str(p))
+    if path.exists():
+        return str(path)
+
+    parts = path.parts
+    if "dbimages" in parts:
+        suffix = Path(*parts[parts.index("dbimages"):])
+        for root in (
+            Path(os.environ.get("TNO_PSF_ROOT", "")),
+            Path("data/tno/psf"),
+        ):
+            if not str(root):
+                continue
+            candidate = root / suffix
+            if candidate.exists():
+                return str(candidate)
+    return str(path)
 
 
 def build_line_psf(psf_file, rate, rate_ra, rate_dec, exptime, pixel_scale):
@@ -207,8 +224,13 @@ def build_line_psf(psf_file, rate, rate_ra, rate_dec, exptime, pixel_scale):
         raise FileNotFoundError(f"PSF file not found: {psf_file}")
 
     # restore PSF fresh each call
+    original_line = trippy_psf.modelPSF.line
+    trippy_psf.modelPSF.line = lambda self, *args, **kwargs: None
     with contextlib.redirect_stdout(io.StringIO()):
-        mpsf = trippy_psf.modelPSF(restore=str(psf_file))
+        try:
+            mpsf = trippy_psf.modelPSF(restore=str(psf_file))
+        finally:
+            trippy_psf.modelPSF.line = original_line
 
     r2d = 180.0 / np.pi
     # Convert ra/dec motion to pixel angle

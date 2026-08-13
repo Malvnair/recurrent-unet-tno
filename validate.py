@@ -191,7 +191,8 @@ def validate(cfg, args, roi_only=False):
 
             running_metrics = None
 
-            for i, (images, labels) in enumerate(myloader):
+            for i, batch in enumerate(myloader):
+                images, labels = batch[:2]
                 if getattr(args, "benchmark", False) and i > 100:
                     break
                 start_time = timeit.default_timer()

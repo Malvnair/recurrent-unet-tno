@@ -10,6 +10,7 @@ import yaml
 _LOADER_REGISTRY = {
     "drive": ("ptsemseg.loader.drive_loader", "driveLoader"),
     "epfl_hand": ("ptsemseg.loader.epfl_hand_loader", "epflHandLoader"),
+    "tno_sequence": ("ptsemseg.loader.tno_sequence", "TNOSequenceDataset"),
 }
 
 

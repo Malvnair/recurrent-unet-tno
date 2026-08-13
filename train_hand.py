@@ -376,7 +376,8 @@ def train(cfg, writer, logger, args):
     logger.info("Set the prediction weights as {}".format(weight))
 
     while i < cfg['training']['train_iters'] and flag:
-        for (images, labels) in trainloader:
+        for batch in trainloader:
+            images, labels = batch[:2]
             i += 1
             start_ts = time.time()
             model.train()
@@ -447,7 +448,8 @@ def train(cfg, writer, logger, args):
                i == cfg['training']['train_iters']:
                 model.eval()
                 with torch.no_grad():
-                    for i_val, (images_val, labels_val) in tqdm(enumerate(valloader)):
+                    for i_val, batch_val in tqdm(enumerate(valloader)):
+                        images_val, labels_val = batch_val[:2]
                         if args.benchmark:
                             if i_val > 10:
                                 break

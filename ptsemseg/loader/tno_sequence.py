@@ -35,6 +35,7 @@ class TNOSequenceDataset(data.Dataset):
         inject=True,
         num_implants=1,
         peak_frac=0.05,
+        **_,
     ):
         self.inner = ShardDataset(
             data_dir,
