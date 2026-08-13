@@ -219,13 +219,14 @@ def build_line_psf(psf_file, rate, rate_ra, rate_dec, exptime, pixel_scale):
     if trippy_angle < -90:
         trippy_angle += 180.0
 
-    mpsf.line(
-        rate,                   # total rate in arcsec/hr
-        trippy_angle,           # TRIPPy pixel-space angle
-        exptime / 3600.0,       # exposure duration in hours
-        pixScale=pixel_scale,
-        useLookupTable=True,
-    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        mpsf.line(
+            rate,                   # total rate in arcsec/hr
+            trippy_angle,           # TRIPPy pixel-space angle
+            exptime / 3600.0,       # exposure duration in hours
+            pixScale=pixel_scale,
+            useLookupTable=True,
+        )
     return mpsf
 
 

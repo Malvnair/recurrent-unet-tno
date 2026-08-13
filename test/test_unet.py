@@ -377,7 +377,11 @@ def test_maintained_model_registry_contract(arch):
     args = runet_args()
     model = get_model({"arch": arch, "feature_scale": 8}, n_classes=2, args=args)
     model.train()
-    outputs = model(torch.randn(1, 3, 64, 64))
+    if arch.startswith("temporal"):
+        inputs = torch.randn(1, 4, 3, 64, 64)
+    else:
+        inputs = torch.randn(1, 3, 64, 64)
+    outputs = model(inputs)
     final_output = outputs[-1] if isinstance(outputs, (list, tuple)) else outputs
     assert final_output.shape == (1, 2, 64, 64)
     loss = final_output.mean()
