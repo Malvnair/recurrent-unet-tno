@@ -60,6 +60,27 @@ def _require_h5py():
     return h5py
 
 
+def _remap_psf_files(paths, psf_root):
+    """Map ARC dbimages PSF paths to the local ignored PSF cache when present."""
+    resolved = []
+    for path in np.asarray(paths):
+        value = path.decode("utf-8") if isinstance(path, bytes) else str(path)
+        candidate = Path(value)
+        if candidate.exists():
+            resolved.append(value)
+            continue
+
+        marker = "dbimages/"
+        if marker in value:
+            local_candidate = psf_root / marker / value.split(marker, 1)[1]
+            if local_candidate.exists():
+                resolved.append(str(local_candidate))
+                continue
+
+        resolved.append(value)
+    return np.asarray(resolved, dtype=object)
+
+
 """
 Define a dataset that reads samples distributed across the shards
 """
@@ -77,6 +98,7 @@ class ShardDataset(data.Dataset):
         self.inject = inject
         self.num_implants = num_implants
         self.output_mode = output_mode
+        self.psf_root = Path(data_dir).resolve().parent / "psf"
 
         # store current training epoch 
         self._epoch = mp.Value("i", 0)
@@ -151,12 +173,16 @@ class ShardDataset(data.Dataset):
                 "exptime": f["frame/exptime"][:],
                 "gain": f["frame/gain"][:],
                 "pixel_scale": f["frame/pixel_scale"][:],
-                "psf_file": f["frame/psf_file"][:],
+                "psf_file": _remap_psf_files(
+                    f["frame/psf_file"][:], self.psf_root
+                ),
                 "tmpl_cent_time": f["template/cent_time"][:],
                 "tmpl_zp": f["template/zp"][:],
                 "tmpl_exptime": f["template/exptime"][:],
                 "tmpl_pixel_scale": f["template/pixel_scale"][:],
-                "tmpl_psf_file": f["template/psf_file"][:],
+                "tmpl_psf_file": _remap_psf_files(
+                    f["template/psf_file"][:], self.psf_root
+                ),
             }
             self._meta[shard_idx] = meta
         return meta

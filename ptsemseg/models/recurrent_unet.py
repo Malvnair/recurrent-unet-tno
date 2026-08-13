@@ -457,3 +457,67 @@ class UNetWithGRU_old(_RecurrentUnet):
             list_ht += [h]
 
         return list_ht
+
+
+class TemporalRecurrentUnet(_RecurrentUnet):
+    """
+    Frame-sequential R-UNet for image sequences.
+
+    Input: (B, T, C, H, W). The shared RecurrentUNetCell runs once per frame,
+    with the ConvGRU hidden state carrying information from frame t-1 to t.
+    The loop length comes from T; args.steps is intentionally ignored.
+    """
+
+    def __init__(self, args, n_classes=2, in_channels=3, **kwargs):
+        feature_level = args.unet_level if 4 >= args.unet_level > 0 else 4
+        super(TemporalRecurrentUnet, self).__init__(
+            args,
+            n_classes=n_classes,
+            **kwargs,
+        )
+        self.input_size = in_channels
+        self.cell = RecurrentUNetCell(
+            args,
+            feature_scale=args.feature_scale,
+            feature_level=feature_level,
+            n_classes=n_classes,
+            is_deconv=True,
+            in_channels=self.input_size + n_classes,
+            is_batchnorm=True,
+            is_input_stack=True,
+        )
+        self.is_input_stack = True
+
+    def forward(self, inputs):
+        if inputs.dim() != 5:
+            raise ValueError(
+                "TemporalRecurrentUnet expects (B, T, C, H, W), "
+                f"got {tuple(inputs.shape)}"
+            )
+
+        batch_size = inputs.shape[0]
+        n_frames = inputs.shape[1]
+        spatial_size = inputs.shape[3:]
+
+        ht, _ = init_hidden_state(
+            self,
+            None,
+            None,
+            self.n_classes,
+            self.hidden_size,
+            batch_size,
+            spatial_size,
+            inputs,
+        )
+        Ht = None
+        outputs = []
+        for t in range(n_frames):
+            frame = inputs[:, t]
+            if self.is_input_stack:
+                stack_inputs = torch.cat([frame, ht], dim=1)
+            else:
+                stack_inputs = frame
+            ht, Ht = self.cell(stack_inputs, Ht)
+            outputs.append(ht)
+
+        return outputs

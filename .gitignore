@@ -2,6 +2,7 @@
 __pycache__
 *.py[cod]
 *.h5
+*.fits
 .pytest_cache/
 .ipynb_checkpoints/
 *.egg-info/
@@ -9,6 +10,7 @@ __pycache__
 .history
 .vscode
 .DS_Store
+sample_*.png
 runs/
 data/
 results/*

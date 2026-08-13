@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 _MAINTAINED_MODELS: dict[str, tuple[str, str]] = {
     "runet": ("ptsemseg.models.recurrent_unet", "GeneralRecurrentUnet"),
+    "temporal_runet": ("ptsemseg.models.recurrent_unet", "TemporalRecurrentUnet"),
     "unet": ("ptsemseg.models.unet", "unet"),
 }
 
@@ -104,6 +105,7 @@ def get_model(model_dict: dict[str, Any], n_classes: int, args: Any, version: st
         "rcnn2",
         "rcnn3",
         "runet",
+        "temporal_runet",
         "unethidden",
         "runethidden",
         "gruunet",

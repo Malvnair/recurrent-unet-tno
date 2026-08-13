@@ -6,6 +6,9 @@ Reused synthetic-TNO logic from maketensor8.py
 
 """
 
+import contextlib
+import io
+
 import numpy as np
 from pathlib import Path
 
@@ -203,8 +206,10 @@ def build_line_psf(psf_file, rate, rate_ra, rate_dec, exptime, pixel_scale):
     if not psf_file.exists():
         raise FileNotFoundError(f"PSF file not found: {psf_file}")
 
-    # restore PSF fresh each call
-    mpsf = trippy_psf.modelPSF(restore=str(psf_file))
+    # Restore PSF fresh each call. TRIPPy prints on every restore; silence it
+    # here so DataLoader worker benchmarks remain readable.
+    with contextlib.redirect_stdout(io.StringIO()):
+        mpsf = trippy_psf.modelPSF(restore=str(psf_file))
 
     r2d = 180.0 / np.pi
     # Convert ra/dec motion to pixel angle
@@ -215,13 +220,14 @@ def build_line_psf(psf_file, rate, rate_ra, rate_dec, exptime, pixel_scale):
     if trippy_angle < -90:
         trippy_angle += 180.0
 
-    mpsf.line(
-        rate,                   # total rate in arcsec/hr
-        trippy_angle,           # TRIPPy pixel-space angle
-        exptime / 3600.0,       # exposure duration in hours
-        pixScale=pixel_scale,
-        useLookupTable=True,
-    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        mpsf.line(
+            rate,                   # total rate in arcsec/hr
+            trippy_angle,           # TRIPPy pixel-space angle
+            exptime / 3600.0,       # exposure duration in hours
+            pixScale=pixel_scale,
+            useLookupTable=True,
+        )
     return mpsf
 
 
@@ -237,9 +243,9 @@ def make_psf_image(mpsf, shape, x, y, counts):
 
     # plant at unit amplitude on the padded blank canvas
     p_im = mpsf.plant(
-        np.array([x + pad]),
-        np.array([y + pad]),
-        np.array([1.0]),
+        x + pad,
+        y + pad,
+        1.0,
         np.zeros(big_shape, dtype=float),
         useLinePSF=True,
         returnModel=True,
@@ -352,9 +358,38 @@ def inject_cutout_sequence(science, variance, mask, metadata, rng,
         # random magnitude
         mag = mag_sampler.sample()
 
-        # random frame-0 position in crop coordinates, away from the edges
-        u_ref = rng.uniform(pad_x, W - pad_x)
-        v_ref = rng.uniform(pad_y, H - pad_y)
+        # Random frame-0 position in crop coordinates. Reject placements whose
+        # positive science-frame track would leave the crop.
+        u_ref = v_ref = None
+        for _ in range(1000):
+            cand_u = rng.uniform(pad_x, W - pad_x)
+            cand_v = rng.uniform(pad_y, H - pad_y)
+            frame_positions = []
+            for i in range(T):
+                a = affines[i]
+                x_i = a[0, 0] * cand_u + a[0, 1] * cand_v + a[0, 2]
+                y_i = a[1, 0] * cand_u + a[1, 1] * cand_v + a[1, 2]
+                dt_hr = (cent_times[i] - cent_time0) * 24.0
+                frame_positions.append((
+                    x_i + motion["rate_ra"] * dt_hr / pscales[i],
+                    y_i - motion["rate_dec"] * dt_hr / pscales[i],
+                ))
+            frame_positions = np.asarray(frame_positions)
+            in_bounds = (
+                (frame_positions[:, 0] >= pad_x)
+                & (frame_positions[:, 0] < W - pad_x)
+                & (frame_positions[:, 1] >= pad_y)
+                & (frame_positions[:, 1] < H - pad_y)
+            )
+            if np.all(in_bounds):
+                u_ref, v_ref = cand_u, cand_v
+                break
+
+        if u_ref is None or v_ref is None:
+            raise RuntimeError(
+                "Could not sample an in-bounds synthetic TNO trajectory after "
+                "1000 attempts. Check cutout size, cadence, and motion prior."
+            )
 
         # template line PSFs only depend on this implant's motion,
         # build them once instead of once per frame
