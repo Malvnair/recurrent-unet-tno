@@ -1,10 +1,6 @@
 """
-Thin adapter over ShardDataset for temporal TNO training.
-
-Input per frame is adapted from ShardDataset's current tensor contract:
-[science, normalized inverse-variance weight, valid_pixel].
-Output target is a binary final track mask thresholded from the injected
-noiseless track_target.
+Thin adapter over ShardDataset raw planes for temporal TNO training.
+ShardDataset emits [science, variance, raw CLASSY bitfield]; this returns [SNR, log variance, bad-bit mask] and a final binary track target.
 """
 
 import numpy as np
@@ -12,6 +8,21 @@ import torch
 from torch.utils import data
 
 from ptsemseg.loader.pytorch_hdf5_loader import ShardDataset
+
+
+CLASSY_BAD_BITS = (
+    (1 << 0)
+    | (1 << 1)
+    | (1 << 2)
+    | (1 << 3)
+    | (1 << 4)
+    | (1 << 7)
+    | (1 << 8)
+    | (1 << 9)
+    | (1 << 10)
+    | (1 << 14)
+    | (1 << 15)
+)
 
 
 class TNOSequenceDataset(data.Dataset):
@@ -47,15 +58,19 @@ class TNOSequenceDataset(data.Dataset):
 
     def __getitem__(self, index):
         sample = self.inner[index]
-        x = sample["input"].numpy()  # (T, 3, H, W)
-        science, invvar_weight, valid = x[:, 0], x[:, 1], x[:, 2]
+        x = sample["input"].numpy()
+        science, variance, mask_bits = x[:, 0], x[:, 1], x[:, 2]
 
-        # invvar_weight is already normalized by ShardDataset, so this is a
-        # sample-scaled SNR-like channel without re-reading raw variance.
-        snr = science * np.sqrt(np.clip(invvar_weight, 0.0, None))
-        log_weight = np.log1p(np.clip(invvar_weight, 0.0, None))
-        bad = (valid <= 0).astype(np.float32)
-        inputs = np.stack([snr, log_weight, bad], axis=1).astype(np.float32)
+        positive_variance = variance > 0
+        sqrt_var = np.zeros_like(variance, dtype=np.float32)
+        np.sqrt(variance, out=sqrt_var, where=positive_variance)
+        snr = np.zeros_like(science, dtype=np.float32)
+        np.divide(science, sqrt_var, out=snr, where=positive_variance)
+        log_var = np.log1p(np.clip(variance, 0.0, None))
+        bad = (mask_bits.astype(np.uint16) & CLASSY_BAD_BITS) != 0
+        inputs = np.stack(
+            [snr, log_var, bad.astype(np.float32)], axis=1
+        ).astype(np.float32)
 
         height, width = science.shape[-2:]
         labels = sample["labels"]

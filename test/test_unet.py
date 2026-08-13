@@ -57,24 +57,63 @@ def test_core_imports_without_optional_dependencies():
 
 
 def test_classy_bitfield_detected_pixels_remain_valid():
-    from ptsemseg.loader.pytorch_hdf5_loader import derive_classy_valid_mask
+    from ptsemseg.loader.tno_sequence import CLASSY_BAD_BITS
 
-    sci = np.ones(5, dtype=np.float32)
-    var = np.ones(5, dtype=np.float32)
     mask = np.asarray(
         [
-            0,       # clear
-            32,      # DETECTED
-            64,      # DETECTED_NEGATIVE
-            2,       # SAT
-            32 | 2,  # DETECTED + SAT
+            0,
+            32,
+            64,
+            2,
+            32 | 2,
         ],
         dtype=np.uint16,
     )
 
-    valid = derive_classy_valid_mask(sci, var, mask)
+    bad = (mask & CLASSY_BAD_BITS) != 0
 
-    assert valid.tolist() == [True, True, True, False, False]
+    assert bad.tolist() == [False, False, False, True, True]
+
+
+def test_tno_sequence_adapter_uses_raw_variance_and_classy_bits():
+    from ptsemseg.loader.tno_sequence import TNOSequenceDataset
+
+    raw = np.asarray(
+        [
+            [
+                [[4.0, 6.0], [8.0, 10.0]],
+                [[4.0, 9.0], [0.0, -1.0]],
+                [[0.0, 32.0], [2.0, 64.0]],
+            ]
+        ],
+        dtype=np.float32,
+    )
+
+    class Inner:
+        def __getitem__(self, index):
+            return {
+                "input": torch.from_numpy(raw),
+                "labels": {"has_track_target": False},
+            }
+
+    dataset = TNOSequenceDataset.__new__(TNOSequenceDataset)
+    dataset.inner = Inner()
+    dataset.inject = False
+    dataset.num_implants = 1
+    dataset.peak_frac = 0.05
+
+    inputs, target, _ = dataset[0]
+
+    expected_snr = np.asarray([[2.0, 2.0], [0.0, 0.0]], dtype=np.float32)
+    expected_log_var = np.log1p(
+        np.asarray([[4.0, 9.0], [0.0, 0.0]], dtype=np.float32)
+    )
+    expected_bad = np.asarray([[0.0, 0.0], [1.0, 0.0]], dtype=np.float32)
+
+    np.testing.assert_allclose(inputs.numpy()[0, 0], expected_snr)
+    np.testing.assert_allclose(inputs.numpy()[0, 1], expected_log_var)
+    np.testing.assert_array_equal(inputs.numpy()[0, 2], expected_bad)
+    assert target.sum().item() == 0
 
 
 def test_structure_cli_override_updates_model_cfg():

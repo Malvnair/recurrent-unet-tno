@@ -6,8 +6,11 @@ Reused synthetic-TNO logic from maketensor8.py
 
 """
 
-import numpy as np
+import contextlib
+import io
 from pathlib import Path
+
+import numpy as np
 
 # trippy import is lazy so the module can be imported without it installed
 trippy_psf = None
@@ -204,7 +207,8 @@ def build_line_psf(psf_file, rate, rate_ra, rate_dec, exptime, pixel_scale):
         raise FileNotFoundError(f"PSF file not found: {psf_file}")
 
     # restore PSF fresh each call
-    mpsf = trippy_psf.modelPSF(restore=str(psf_file))
+    with contextlib.redirect_stdout(io.StringIO()):
+        mpsf = trippy_psf.modelPSF(restore=str(psf_file))
 
     r2d = 180.0 / np.pi
     # Convert ra/dec motion to pixel angle
