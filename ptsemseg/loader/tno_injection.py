@@ -128,7 +128,7 @@ class MotionModel:
     EARTH_ANGULAR_VELOCITY = 148.0   # arcsec/hr
 
     @staticmethod
-    def compute(orbit):
+    def compute(orbit, velocity_scale=1.0):
         """
         Returns dict with rate_ra, rate_dec, rate, angle.
         """
@@ -146,9 +146,10 @@ class MotionModel:
         raw_x = np.cos(alpha) / delta - np.cos(i) * np.cos(alpha + theta) / (r ** 1.5)
         raw_y = np.sin(i) / (r ** 1.5)
 
-        # convert to arcsec/hr
-        rate_ra  =  MotionModel.EARTH_ANGULAR_VELOCITY * raw_x
-        rate_dec =  MotionModel.EARTH_ANGULAR_VELOCITY * raw_y
+        # convert to arcsec/hr. velocity_scale is a debugging control; apply
+        # it once here so propagation, line-PSF trailing, and labels agree.
+        rate_ra  =  MotionModel.EARTH_ANGULAR_VELOCITY * raw_x * velocity_scale
+        rate_dec =  MotionModel.EARTH_ANGULAR_VELOCITY * raw_y * velocity_scale
 
         # combined speed
         rate  = np.sqrt(rate_ra**2 + rate_dec**2)
@@ -348,6 +349,8 @@ def inject_cutout_sequence(science, variance, mask, metadata, rng,
                            add_negative_wells=True,
                            add_poisson_noise=True,
                            mag_min=None, mag_max=None,
+                           velocity_scale=1.0,
+                           target_mode="union",
                            edge_pad_frac=0.1,
                            output_mode="normal"):
 
@@ -356,6 +359,8 @@ def inject_cutout_sequence(science, variance, mask, metadata, rng,
             f"Invalid output_mode {output_mode!r}; "
             f"expected one of {sorted(VALID_OUTPUT_MODES)}"
         )
+    if target_mode not in {"union", "per-frame"}:
+        raise ValueError("target_mode must be 'union' or 'per-frame'")
 
     T, H, W = science.shape
 
@@ -386,7 +391,10 @@ def inject_cutout_sequence(science, variance, mask, metadata, rng,
 
     # ground-truth: clean positive only track
     if output_mode == "ground-truth":
-        track_target = np.zeros((H, W), dtype=np.float32)
+        if target_mode == "per-frame":
+            track_target = np.zeros((T, H, W), dtype=np.float32)
+        else:
+            track_target = np.zeros((H, W), dtype=np.float32)
     else:
         track_target = None
 
@@ -422,7 +430,7 @@ def inject_cutout_sequence(science, variance, mask, metadata, rng,
             # fake orbital paramters
             orbit = orbit_sampler.sample()
             # paramters to apparent sky motion
-            motion = MotionModel.compute(orbit)
+            motion = MotionModel.compute(orbit, velocity_scale=velocity_scale)
 
             ref = sample_visible_reference_position(
                 rng, motion, affines, cent_times, cent_time0,
@@ -431,7 +439,12 @@ def inject_cutout_sequence(science, variance, mask, metadata, rng,
                 break
         else:
             raise RuntimeError(
-                "Could not find an implant position visible in every frame")
+                "Could not find an implant position visible in every frame. "
+                "If --velocity-scale is greater than 1, it is the likely cause: "
+                "higher velocity makes tracks leave the crop and spreads the "
+                "same counts over a longer, fainter streak. Lower "
+                "--velocity-scale or lower --mag-min/--mag-max to compensate."
+            )
 
         u_ref, v_ref = ref
 
@@ -479,7 +492,10 @@ def inject_cutout_sequence(science, variance, mask, metadata, rng,
                                           motion["rate_ra"], motion["rate_dec"],
                                           exptimes[i], ref_pscale)
                 tgt_model = make_psf_image(mpsf_ref, (H, W), x_t, y_t, pos_counts)
-                track_target += tgt_model.astype(np.float32)
+                if target_mode == "per-frame":
+                    track_target[i] += tgt_model.astype(np.float32)
+                else:
+                    track_target += tgt_model.astype(np.float32)
 
             # variance goes up by the Poisson contribution of the model
             variance[i] += (np.abs(model) / gains[i]).astype(np.float32)

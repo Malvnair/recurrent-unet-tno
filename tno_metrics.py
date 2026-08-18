@@ -26,16 +26,28 @@ def _blobs(pred2d):
     return keep, count
 
 
+def _target_2d(y):
+    if y.ndim == 4:
+        return y[:, -1]
+    return y
+
+
+def _predict_mask(model, x, device, threshold):
+    logits = model(x.to(device))[-1]
+    p1 = torch.softmax(logits, dim=1)[:, 1]
+    return (p1 > threshold).cpu().numpy().astype(bool)
+
+
 @torch.no_grad()
-def detection_metrics(model, injected_loader, background_loader, device):
+def detection_metrics(model, injected_loader, background_loader, device, threshold=0.5):
     detected = []
     mags = []
     tp_px = 0
     fp_px = 0
 
     for x, y, meta in injected_loader:
-        pred = model(x.to(device))[-1].argmax(1).cpu().numpy().astype(bool)
-        gt = y.numpy().astype(bool)
+        pred = _predict_mask(model, x, device, threshold)
+        gt = _target_2d(y).numpy().astype(bool)
         for batch_index in range(pred.shape[0]):
             blobs, _ = _blobs(pred[batch_index])
             detected.append(bool((blobs & gt[batch_index]).any()))
@@ -46,7 +58,7 @@ def detection_metrics(model, injected_loader, background_loader, device):
     n_background = 0
     fp_blobs = 0
     for x, _y, _meta in background_loader:
-        pred = model(x.to(device))[-1].argmax(1).cpu().numpy().astype(bool)
+        pred = _predict_mask(model, x, device, threshold)
         for batch_index in range(pred.shape[0]):
             _, n_blobs = _blobs(pred[batch_index])
             fp_blobs += n_blobs

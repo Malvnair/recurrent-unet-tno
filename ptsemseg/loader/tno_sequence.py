@@ -35,18 +35,31 @@ class TNOSequenceDataset(data.Dataset):
         inject=True,
         num_implants=1,
         peak_frac=0.05,
+        mag_min=None,
+        mag_max=None,
+        velocity_scale=1.0,
+        fixed_injection=False,
+        target_mode="union",
         **_,
     ):
+        if target_mode not in {"union", "per-frame"}:
+            raise ValueError("target_mode must be 'union' or 'per-frame'")
         self.inner = ShardDataset(
             data_dir,
             base_seed=base_seed,
             inject=inject,
             num_implants=num_implants,
             output_mode="ground-truth",
+            mag_min=mag_min,
+            mag_max=mag_max,
+            velocity_scale=velocity_scale,
+            fixed_injection=fixed_injection,
+            target_mode=target_mode,
         )
         self.inject = inject
         self.num_implants = num_implants
         self.peak_frac = peak_frac
+        self.target_mode = target_mode
 
     def __len__(self):
         return len(self.inner)
@@ -81,9 +94,15 @@ class TNOSequenceDataset(data.Dataset):
             if peak > 0:
                 target = track_target >= self.peak_frac * peak
             else:
-                target = np.zeros((height, width), dtype=bool)
+                if self.target_mode == "per-frame":
+                    target = np.zeros((science.shape[0], height, width), dtype=bool)
+                else:
+                    target = np.zeros((height, width), dtype=bool)
         else:
-            target = np.zeros((height, width), dtype=bool)
+            if self.target_mode == "per-frame":
+                target = np.zeros((science.shape[0], height, width), dtype=bool)
+            else:
+                target = np.zeros((height, width), dtype=bool)
         target = target.astype(np.int64)
 
         if self.inject:

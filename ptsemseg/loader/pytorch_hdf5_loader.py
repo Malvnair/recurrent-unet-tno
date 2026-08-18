@@ -40,7 +40,19 @@ Define a dataset that reads samples distributed across the shards
 
 class ShardDataset(data.Dataset):
     # locate shard and read the coutns
-    def __init__(self, data_dir, base_seed=0, inject=True, num_implants=1, output_mode="normal"):
+    def __init__(
+        self,
+        data_dir,
+        base_seed=0,
+        inject=True,
+        num_implants=1,
+        output_mode="normal",
+        mag_min=None,
+        mag_max=None,
+        velocity_scale=1.0,
+        fixed_injection=False,
+        target_mode="union",
+    ):
         h5py = _require_h5py()
         self.shard_paths = sorted(Path(data_dir).glob("*.h5"))
         if not self.shard_paths:
@@ -51,6 +63,11 @@ class ShardDataset(data.Dataset):
         self.inject = inject
         self.num_implants = num_implants
         self.output_mode = output_mode
+        self.mag_min = mag_min
+        self.mag_max = mag_max
+        self.velocity_scale = velocity_scale
+        self.fixed_injection = fixed_injection
+        self.target_mode = target_mode
 
         # store current training epoch 
         self._epoch = mp.Value("i", 0)
@@ -140,8 +157,11 @@ class ShardDataset(data.Dataset):
         """
         Random TNO’s orbit, motion, brightness, and position.
         """
-        ss = np.random.SeedSequence([self.base_seed, self._epoch.value,
-                                     int(global_index)])
+        if self.fixed_injection:
+            seed_values = [self.base_seed, int(global_index)]
+        else:
+            seed_values = [self.base_seed, self._epoch.value, int(global_index)]
+        ss = np.random.SeedSequence(seed_values)
         # same sample and epoch always produce the same random values
         return np.random.Generator(np.random.Philox(ss))
 
@@ -180,6 +200,10 @@ class ShardDataset(data.Dataset):
                 rng=rng,
                 num_implants=self.num_implants,
                 output_mode=self.output_mode,
+                mag_min=self.mag_min,
+                mag_max=self.mag_max,
+                velocity_scale=self.velocity_scale,
+                target_mode=self.target_mode,
             )
         else:
             # raw background only, no fake object
