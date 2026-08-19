@@ -34,6 +34,57 @@ def _require_h5py():
     return h5py
 
 
+def sample_sparse_implant_count(rng, max_implants):
+    """
+    Skewed training distribution: most samples get 1-3 implants, with rare
+    crowded examples up to max_implants.
+    """
+    max_implants = int(max_implants)
+    if max_implants <= 1:
+        return 1
+
+    u = rng.random()
+    if u < 0.70:
+        hi = min(3, max_implants)
+        return int(rng.integers(1, hi + 1))
+    if u < 0.90:
+        lo = min(4, max_implants)
+        hi = min(10, max_implants)
+        return int(rng.integers(lo, hi + 1))
+    if u < 0.98:
+        lo = min(11, max_implants)
+        hi = min(30, max_implants)
+        return int(rng.integers(lo, hi + 1))
+
+    lo = min(31, max_implants)
+    return int(rng.integers(lo, max_implants + 1))
+
+
+def pad_implant_labels(labels, max_implants):
+    """
+    Keep label tensor shapes fixed even when each sample has a different
+    number of active implants.
+    """
+    active = int(labels["num_implants"])
+    max_implants = int(max_implants)
+    labels["active_implants"] = np.int64(active)
+    labels["num_implants"] = np.int64(max_implants)
+
+    for key, value in list(labels.items()):
+        arr = np.asarray(value)
+        if arr.ndim == 0 or arr.shape[0] != active:
+            continue
+        padded_shape = (max_implants,) + arr.shape[1:]
+        padded = np.zeros(padded_shape, dtype=arr.dtype)
+        padded[:active] = arr
+        labels[key] = padded
+
+    valid = np.zeros(max_implants, dtype=np.uint8)
+    valid[:active] = 1
+    labels["implant_valid"] = valid
+    return labels
+
+
 """
 Define a dataset that reads samples distributed across the shards
 """
@@ -52,6 +103,7 @@ class ShardDataset(data.Dataset):
         velocity_scale=1.0,
         fixed_injection=False,
         target_mode="union",
+        implant_mode="fixed",
     ):
         h5py = _require_h5py()
         self.shard_paths = sorted(Path(data_dir).glob("*.h5"))
@@ -68,6 +120,7 @@ class ShardDataset(data.Dataset):
         self.velocity_scale = velocity_scale
         self.fixed_injection = fixed_injection
         self.target_mode = target_mode
+        self.implant_mode = implant_mode
 
         # store current training epoch 
         self._epoch = mp.Value("i", 0)
@@ -192,19 +245,25 @@ class ShardDataset(data.Dataset):
         # Random synthetic variables, planted into the cutout
         if self.inject:
             rng = self._derive_rng(global_index)
+            actual_implants = self.num_implants
+            if self.implant_mode == "sparse":
+                actual_implants = sample_sparse_implant_count(
+                    rng, self.num_implants)
             sci, var, msk, labels = inject_cutout_sequence(
                 science=sci,
                 variance=var,
                 mask=msk,
                 metadata=meta,
                 rng=rng,
-                num_implants=self.num_implants,
+                num_implants=actual_implants,
                 output_mode=self.output_mode,
                 mag_min=self.mag_min,
                 mag_max=self.mag_max,
                 velocity_scale=self.velocity_scale,
                 target_mode=self.target_mode,
             )
+            if self.implant_mode == "sparse":
+                labels = pad_implant_labels(labels, self.num_implants)
         else:
             # raw background only, no fake object
             labels = {"num_implants": np.int64(0)}

@@ -9,9 +9,12 @@ Reused synthetic-TNO logic from maketensor8.py
 import contextlib
 import io
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, "/Users/malavikanair/Documents/GitHub/trippy")
 
 # trippy import is lazy so the module can be imported without it installed
 trippy_psf = None

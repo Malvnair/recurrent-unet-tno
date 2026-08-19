@@ -163,6 +163,13 @@ def main():
     parser.add_argument("--feature-scale", type=int, default=4)
     parser.add_argument("--peak-frac", type=float, default=0.05)
     parser.add_argument("--num-implants", type=int, default=1)
+    parser.add_argument(
+        "--implant-mode",
+        choices=("fixed", "sparse"),
+        default="fixed",
+        help="fixed uses exactly --num-implants; sparse draws mostly 1-3, "
+        "rarely up to --num-implants",
+    )
     parser.add_argument("--mag-min", type=float, default=22.0)
     parser.add_argument("--mag-max", type=float, default=24.0)
     parser.add_argument(
@@ -209,6 +216,7 @@ def main():
         velocity_scale=args.velocity_scale,
         fixed_injection=args.fixed_injection,
         target_mode=args.target_mode,
+        implant_mode=args.implant_mode,
     )
     val_dataset = TNOSequenceDataset(
         args.val_dir,
@@ -220,6 +228,7 @@ def main():
         mag_max=args.mag_max,
         velocity_scale=args.velocity_scale,
         target_mode=args.target_mode,
+        implant_mode=args.implant_mode,
     )
     background_dataset = TNOSequenceDataset(
         args.val_dir,
@@ -227,6 +236,7 @@ def main():
         inject=False,
         num_implants=args.num_implants,
         target_mode=args.target_mode,
+        implant_mode=args.implant_mode,
     )
     if args.max_train_samples is not None:
         train_dataset = LimitedDataset(train_dataset, args.max_train_samples)
@@ -268,7 +278,8 @@ def main():
 
     print(
         f"loss={args.loss}  mse_pos_weight={args.mse_pos_weight}  "
-        f"target_mode={args.target_mode}  supervise_all_steps={args.supervise_all_steps}"
+        f"target_mode={args.target_mode}  supervise_all_steps={args.supervise_all_steps}  "
+        f"implant_mode={args.implant_mode}  max_implants={args.num_implants}"
     )
     if args.target_mode == "per-frame" and not args.supervise_all_steps:
         print("per-frame target with final-output-only training uses the final frame target.")

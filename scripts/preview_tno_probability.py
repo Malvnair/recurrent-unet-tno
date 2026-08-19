@@ -21,7 +21,7 @@ from ptsemseg.models.recurrent_unet import TemporalRecurrentUnet
 
 
 def _load_checkpoint(path, device):
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     if isinstance(checkpoint, dict) and "model_state" in checkpoint:
         return checkpoint["model_state"], checkpoint.get("margs", {})
     return checkpoint, {}
@@ -107,6 +107,7 @@ def main():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-implants", type=int, default=1)
+    parser.add_argument("--implant-mode", choices=("fixed", "sparse"), default="fixed")
     parser.add_argument("--peak-frac", type=float, default=0.05)
     parser.add_argument("--mag-min", type=float, default=22.0)
     parser.add_argument("--mag-max", type=float, default=24.0)
@@ -129,6 +130,7 @@ def main():
         velocity_scale=args.velocity_scale,
         fixed_injection=args.fixed_injection,
         target_mode=args.target_mode,
+        implant_mode=args.implant_mode,
     )
 
     model_state, saved_args = _load_checkpoint(args.model_path, device)

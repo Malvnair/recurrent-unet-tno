@@ -41,6 +41,7 @@ class TNOSequenceDataset(data.Dataset):
         velocity_scale=1.0,
         fixed_injection=False,
         target_mode="union",
+        implant_mode="fixed",
         **_,
     ):
         if target_mode not in {"union", "per-frame"}:
@@ -56,6 +57,7 @@ class TNOSequenceDataset(data.Dataset):
             velocity_scale=velocity_scale,
             fixed_injection=fixed_injection,
             target_mode=target_mode,
+            implant_mode=implant_mode,
         )
         self.inject = inject
         self.num_implants = num_implants
