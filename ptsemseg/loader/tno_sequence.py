@@ -27,6 +27,7 @@ CLASSY_BAD_BITS = (
 
 class TNOSequenceDataset(data.Dataset):
     n_classes = 2
+    target_mode = "union"
 
     def __init__(
         self,
